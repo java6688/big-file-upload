@@ -1,5 +1,5 @@
-# 忽略temp目录
+chunks
 temp
-uploads
+upload
 # 忽略node_modules目录
 node_modules

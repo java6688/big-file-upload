@@ -1,18 +1,8 @@
 const express = require('express');
-const multer = require('multer');
 const path = require('path'); // 用于处理文件路径
 const fs = require('fs');
 const app = express();
-const Redis = require('ioredis')
-
-const redis = new Redis({
-    host: "stopstop.top",
-    port: 6379,
-    password: process.env.REDIS_PASSWORD,
-});
-
-// 测试连接
-redis.ping().then(() => console.log("Redis connected"));
+const { formidable } = require('formidable');
 
 // 中间件：解析 JSON 请求体
 app.use(express.json());
@@ -32,40 +22,18 @@ app.use((req, res, next) => {
 });
 
 // 切片存放路径
-const chunkDir = path.join(process.cwd(), 'temp');
+const chunkDir = path.join(process.cwd(), 'chunks');
 // 合并后的文件存放路径
 const mergeDir = path.join(process.cwd(), 'upload');
 
-// 配置 multer 的存储引擎
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    console.log('destination收到文件上传请求');
-    // 判断项目根目录是否存在 temp 目录，不存在则创建
-    if (!fs.existsSync(chunkDir)) {
-      fs.mkdirSync(chunkDir, { recursive: true });
-    }
-    cb(null, chunkDir);
-  },
-  filename: function (req, file, cb) {
-    console.log('filename收到文件上传请求', file);
+const buildChunkname = (filename, index) => {
+  return filename + '-' + index
+}
 
-    // const filename = decodeURIComponent(file.originalname)
-    const filename = req.query.filename + '-' + req.query.index;
-
-    cb(null, filename);
-  }
-});
-
-function verifyChunks(req, res, next) {
-
-  const filename = req.query.filename + '-' + req.query.index
-
-  const chunkPath = path.join(chunkDir, filename);
-  // 检查redis当中是否存在该文件
-  // const isExistRedis = redis.get(chunkPath);
+const verifyChunks = (req, res, next) => {
+  const chunkPath = path.join(chunkDir, buildChunkname(req.query.filename, req.query.index));
   // 检查当前切片文件是否已经存在
   const hasExistFile = fs.existsSync(chunkPath);
-  // redis和文件检查双重保障，确保切片不存在时才上传isExistRedis &&
   if (hasExistFile) {
     // 直接响应。不再执行后续中间件，如后面的回调upload.single('chunk')、切片上传成功回调
     res.json({
@@ -77,16 +45,40 @@ function verifyChunks(req, res, next) {
   }
 }
 
-// 创建 multer 实例
-const upload = multer({ storage: storage });
-
 // 处理单文件上传。'video' 必须与前端的 input 的 name 属性一致。
-app.post('/chunk', verifyChunks, upload.single('chunk'), (req, res) => {
+app.post('/chunk', verifyChunks, async (req, res) => {
   console.log('upload收到文件上传请求', req.body);
-  // 上传成功后，文件信息在 req.file 中
-  // console.log(req.file);
-  // 把上传成功的文件名保存到redis，过期自动清除(EX秒)
-  redis.set('chunks:' + req.file.filename, req.file.filename, 'EX', 60 * 10)
+
+  // 判断当前目录没有temp文件夹，则创建
+  if (!fs.existsSync('./temp')) {
+    fs.mkdirSync('./temp', { recursive: true });
+  }
+
+  // 使用formidable解析表单数据
+  const form = formidable({
+    uploadDir: './temp', // 临时存储路径
+    keepExtensions: true
+  });
+
+  try {
+    const [fields, files] = await form.parse(req);
+    console.log('fields', fields);
+    // console.log('files', files);
+    const filename = fields.filename[0];
+    const chunkIndex = fields.index[0];
+    const chunkFile = files.chunk[0];
+
+    if (!fs.existsSync(chunkDir)) {
+      fs.mkdirSync(chunkDir, { recursive: true });
+    }
+    // 将临时文件移动到 chunkDir 目录
+    const targetPath = path.join(chunkDir, buildChunkname(filename, chunkIndex));
+    fs.renameSync(chunkFile.filepath, targetPath)
+    console.log('分片上传成功', chunkIndex);
+  } catch (error) {
+    return res.status(500).json({ error: '分片上传失败', msg: error });
+  }
+
   res.send({
     code: 200,
     message: '切片上传成功',
@@ -94,16 +86,12 @@ app.post('/chunk', verifyChunks, upload.single('chunk'), (req, res) => {
   });
 });
 
-
-
-// 验证切片接口
-
 // 合并切片
 app.post('/merge-chunk', (req, res) => {
-  console.log('merge-chunk收到文件合并请求');
-  const { filename } = req.body;
+  console.log('merge-chunk收到文件合并请求', req.body);
+  const { filename } = req.query;
   if (!filename) {
-    return res.status(400).send({ code: '4000', message: '缺少文件名参数' });
+    return res.status(400).send({ success: false, message: '缺少filename参数' });
   }
   // 合并后的文件路径，如果不存在则创建该目录
   if (!fs.existsSync(mergeDir)) {
@@ -129,9 +117,9 @@ app.post('/merge-chunk', (req, res) => {
   let mergedSize = 0;
 
   try {
-    for (const filename of chunkFilenames) {
+    for (const chunkname of chunkFilenames) {
       // 创建可读流，读取切片
-      const chunkPath = path.join(chunkDir, filename);
+      const chunkPath = path.join(chunkDir, chunkname);
       // 读取切片
       const data = fs.readFileSync(chunkPath);
       // 写入合并后的文件
@@ -140,17 +128,15 @@ app.post('/merge-chunk', (req, res) => {
       mergedSize += data.length;
       // 删除已合并的切片
       fs.unlinkSync(chunkPath);
-      // redis当中删除该切片
-      redis.del('chunks:' + filename);
     }
     // 合并完成后关闭流
     writeStream.end();
   } catch (err) {
-    return res.status(500).send({ code: '5000', message: '合并失败', error: err.message });
+    return res.status(500).send({ success: false, message: '合并失败!', error: err.message });
   }
 
   res.send({
-    code: '0000',
+    success: true,
     message: '文件合并成功',
     file: {
       filename,
