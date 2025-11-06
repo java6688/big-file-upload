@@ -3,17 +3,23 @@
     <n-upload @before-upload="onUpload">
       <n-button>上传文件</n-button>
     </n-upload>
-    <div class="percentage">
+    <div class="percentage section">
       <div>
         <span>上传进度：</span>
         <n-progress type="line" :percentage="progress" />
       </div>
     </div>
-    <div class="actions">
-      <!-- <n-button v-if="isPause" type="primary" @click="onResume">继续</n-button>
-      <n-button v-else type="default" @click="onPause">暂停</n-button> -->
-      <n-button type="default" @click="onPause">暂停</n-button>
-      <n-button type="primary" @click="onResume">继续</n-button>
+    <div class="state section">
+      <span>当前状态：</span>
+      <n-tag v-if="state === UploadStatus.Uploading" type="info">上传中</n-tag>
+      <n-tag v-else-if="state === UploadStatus.Pause" type="warning">暂停</n-tag>
+      <n-tag v-else-if="state === UploadStatus.Completed" type="success">完成</n-tag>
+      <n-tag v-else>等待上传</n-tag>
+    </div>
+    <div class="actions section">
+      <span>操作：</span>
+      <n-button type="default" @click="onPause" v-if="state === UploadStatus.Uploading">暂停</n-button>
+      <n-button type="primary" @click="onResume" v-if="state === UploadStatus.Pause">继续</n-button>
     </div>
 
     <div class="chunk-list">
@@ -26,9 +32,9 @@
 </template>
 
 <script setup lang="ts">
-import { NUpload, NButton, useMessage, NProgress } from "naive-ui";
+import { NUpload, NButton, useMessage, NProgress, NTag } from "naive-ui";
 import type { UploadFileInfo } from "naive-ui";
-import { useBigFileUpload } from "@/hooks/useBigFileUpload";
+import { useBigFileUpload, UploadStatus } from "@/hooks/useBigFileUpload";
 import ChunkDetail from "./ChunkDetail.vue";
 import { computed } from "vue";
 
@@ -37,7 +43,8 @@ const {
   startUpload,
   pauseUpload,
   resumeUpload,
-  chunks
+  chunks,
+  state
 } = useBigFileUpload();
 const message = useMessage();
 
@@ -75,11 +82,15 @@ const onResume = () => {
 }
 .actions {
   display: flex;
+  align-items: center;
   gap: 10px;
 }
 
 .chunk-list {
   height: 600px;
   overflow-y: auto;
+}
+.section {
+  margin-top: 20px;
 }
 </style>

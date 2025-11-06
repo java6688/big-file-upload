@@ -30,15 +30,31 @@ export type Chunk = {
   requestSize: number;
   // 是否完成上传
   completed: boolean;
+  // 上传进度
+  progress: number;
 };
+
+// 上传状态
+export const UploadStatus = {
+  // 暂停
+  Pause: 'pause',
+  // 上传中
+  Uploading: 'uploading',
+  // 完成
+  Completed: 'completed',
+  // 等待上传
+  Wait: 'wait',
+}
 
 export const useBigFileUpload = (
   props: Props = {
     chunkSize: 1024 * 1024 * 1,
   }
 ) => {
+  // 文件上传状态
+  const state = ref(UploadStatus.Wait)
+  // 服务器已存在该文件
   const hasExistFile = ref(false);
-  let isPuase = false;
   // 当前上传的文件
   let fileTarget: File | null = null;
 
@@ -58,8 +74,6 @@ export const useBigFileUpload = (
       return 0;
     }
     const conpletedChunks = chunks.value.filter((chunk) => chunk.completed);
-    console.log("已完成切片数", conpletedChunks.length);
-    console.log("总切片数", chunkSize);
     return (conpletedChunks.length / chunkSize) * 100;
   });
 
@@ -76,8 +90,11 @@ export const useBigFileUpload = (
         index: j,
         size: chunkSize,
         uploaded: 0,
-        completed: false,
         requestSize: 0,
+        progress: 0,
+        get completed() {
+          return this.progress === 1;
+        }
       });
     }
     return chunks;
@@ -101,23 +118,26 @@ export const useBigFileUpload = (
         {
           signal: abortController.signal,
           onUploadProgress: (progressEvent: AxiosProgressEvent) => {
+            // console.log('progressEvent', progressEvent)
             // 计算上传进度
-            if (chunks.value[index] && progressEvent.total) {
+            if (chunks.value[index] && progressEvent.total && progressEvent.progress) {
               // 记录当前上传切片请求进度。
               // 注意，由于网络请求具有额外开销，上传进度可能会和切片大小不一样
               chunks.value[index].uploaded = progressEvent.loaded;
               chunks.value[index].requestSize = progressEvent.total;
+              // 计算上传进度
+              chunks.value[index].progress = progressEvent.progress;
             }
           },
         }
       )
-      .then((res) => {
-        if (chunks.value[index]) {
-          chunks.value[index].completed = true;
-        }
-        // 处理完切片后，返回结果到下一个then回调
-        return res;
-      });
+      // .then((res) => {
+      //   if (chunks.value[index]) {
+      //     chunks.value[index].completed = true;
+      //   }
+      //   // 处理完切片后，返回结果到下一个then回调
+      //   return res;
+      // });
 
     return {
       promise,
@@ -149,6 +169,7 @@ export const useBigFileUpload = (
 
     // 恢复上传不用重新创建切片，延续之前的切片进度
     if (!resume) {
+      state.value = UploadStatus.Uploading
       fileTarget = file;
       chunks.value = createChunks(file);
     }
@@ -187,7 +208,7 @@ export const useBigFileUpload = (
         }
       );
 
-      if (isPuase) break;
+      if (state.value === UploadStatus.Pause) return;
 
       console.log(res, "下来了");
       if (res.data.hasExist) {
@@ -197,7 +218,8 @@ export const useBigFileUpload = (
           promise: Promise.resolve(res),
           abortController,
         };
-        chunk.completed = true;
+        chunk.progress = 1;
+        // chunk.completed = true;
       }
     }
 
@@ -219,7 +241,7 @@ export const useBigFileUpload = (
 
   // 暂停切片上传
   const pauseUpload = () => {
-    isPuase = true;
+    state.value = UploadStatus.Pause
     chunkReqQueueList.forEach((req) => {
       if (req.abortController) {
         req.abortController.abort("用户取消上传!");
@@ -231,7 +253,7 @@ export const useBigFileUpload = (
 
   // 恢复切片上传
   const resumeUpload = () => {
-    isPuase = false;
+    state.value = UploadStatus.Uploading
     startUpload(fileTarget!, true);
   };
 
@@ -241,5 +263,6 @@ export const useBigFileUpload = (
     pauseUpload,
     resumeUpload,
     chunks,
+    state
   };
 };
