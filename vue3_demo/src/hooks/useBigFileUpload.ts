@@ -2,9 +2,9 @@ import axios, { type AxiosProgressEvent, type AxiosResponse } from "axios";
 import { createDiscreteApi } from "naive-ui";
 import { computed, markRaw, ref } from "vue";
 
-const { message } = createDiscreteApi(
-  ['message']
-)
+const baseUrl = "http://localhost:3000";
+
+const { message } = createDiscreteApi(["message"]);
 
 type Props = {
   chunkSize: number;
@@ -37,14 +37,14 @@ export type Chunk = {
 // 上传状态
 export const UploadStatus = {
   // 暂停
-  Pause: 'pause',
+  Pause: "pause",
   // 上传中
-  Uploading: 'uploading',
+  Uploading: "uploading",
   // 完成
-  Completed: 'completed',
+  Completed: "completed",
   // 等待上传
-  Wait: 'wait',
-}
+  Wait: "wait",
+};
 
 export const useBigFileUpload = (
   props: Props = {
@@ -52,11 +52,13 @@ export const useBigFileUpload = (
   }
 ) => {
   // 文件上传状态
-  const state = ref(UploadStatus.Wait)
+  const state = ref(UploadStatus.Wait);
   // 服务器已存在该文件
   const hasExistFile = ref(false);
   // 当前上传的文件
   let fileTarget: File | null = null;
+  // 文件哈希值
+  let fileHash = '';
 
   // 当前上传切片数组
   const chunks = ref<Chunk[]>([]);
@@ -66,8 +68,8 @@ export const useBigFileUpload = (
 
   // 当前上传完成的切片/总切片数
   const percentage = computed(() => {
-    if(hasExistFile.value) {
-      return 100
+    if (hasExistFile.value) {
+      return 100;
     }
     const chunkSize = chunks.value.length;
     if (chunkSize === 0) {
@@ -86,7 +88,7 @@ export const useBigFileUpload = (
     for (let i = 0, j = 0; i < file.size; i += chunkSize, j++) {
       chunks.push({
         chunk: markRaw(file.slice(i, i + chunkSize)),
-        name: file.name + "-" + j,
+        name: file.name,
         index: j,
         size: chunkSize,
         uploaded: 0,
@@ -94,7 +96,7 @@ export const useBigFileUpload = (
         progress: 0,
         get completed() {
           return this.progress === 1;
-        }
+        },
       });
     }
     return chunks;
@@ -111,33 +113,36 @@ export const useBigFileUpload = (
     // 创建中断请求器
     const abortController = new AbortController();
 
-    const promise = axios
-      .post(
-        `http://localhost:3000/chunk?filename=${name}&index=${index}`,
-        formData,
-        {
-          signal: abortController.signal,
-          onUploadProgress: (progressEvent: AxiosProgressEvent) => {
-            // console.log('progressEvent', progressEvent)
+    const promise = axios.post(
+      `${baseUrl}/chunk?filename=${name}&index=${index}&fileHash=${fileHash}`,
+      formData,
+      {
+        signal: abortController.signal,
+        onUploadProgress: (progressEvent: AxiosProgressEvent) => {
+          // console.log('progressEvent', progressEvent)
+          // 计算上传进度
+          if (
+            chunks.value[index] &&
+            progressEvent.total &&
+            progressEvent.progress
+          ) {
+            // 记录当前上传切片请求进度。
+            // 注意，由于网络请求具有额外开销，上传进度可能会和切片大小不一样
+            chunks.value[index].uploaded = progressEvent.loaded;
+            chunks.value[index].requestSize = progressEvent.total;
             // 计算上传进度
-            if (chunks.value[index] && progressEvent.total && progressEvent.progress) {
-              // 记录当前上传切片请求进度。
-              // 注意，由于网络请求具有额外开销，上传进度可能会和切片大小不一样
-              chunks.value[index].uploaded = progressEvent.loaded;
-              chunks.value[index].requestSize = progressEvent.total;
-              // 计算上传进度
-              chunks.value[index].progress = progressEvent.progress;
-            }
-          },
-        }
-      )
-      // .then((res) => {
-      //   if (chunks.value[index]) {
-      //     chunks.value[index].completed = true;
-      //   }
-      //   // 处理完切片后，返回结果到下一个then回调
-      //   return res;
-      // });
+            chunks.value[index].progress = progressEvent.progress;
+          }
+        },
+      }
+    );
+    // .then((res) => {
+    //   if (chunks.value[index]) {
+    //     chunks.value[index].completed = true;
+    //   }
+    //   // 处理完切片后，返回结果到下一个then回调
+    //   return res;
+    // });
 
     return {
       promise,
@@ -147,8 +152,36 @@ export const useBigFileUpload = (
 
   // 合并切片
   const mergeChunksApi = (filename: string) => {
-    return axios.post("http://localhost:3000/merge-chunk", {
+    return axios.post(`http://localhost:3000/merge-chunk`, {
       filename,
+    });
+  };
+
+  const getHashWorker = async (): Promise<string> => {
+    return new Promise((resolve) => {
+      // 导入vue3_demo\src\utils\workers\file-hash.work.js的worker
+      const worker = new Worker(
+        new URL("../utils/workers/file-hash.work.js", import.meta.url)
+      );
+      console.log(
+        new URL("../utils/workers/file-hash.work.js", import.meta.url)
+      );
+      console.log(import.meta.url);
+      worker.postMessage({
+        chunks: chunks.value.map((chunk) => chunk.chunk),
+      });
+      worker.onmessage = (e) => {
+        const { index, hash } = e.data;
+        console.log("worker hash", hash);
+        if(chunks.value[index]) {
+          chunks.value[index].name = hash;
+        }
+        console.log(chunks.value.length === e.data.index);
+        if (chunks.value.length === e.data.index) {
+          // 完成计算哈希值
+          resolve(e.data.hash);
+        }
+      };
     });
   };
 
@@ -158,20 +191,24 @@ export const useBigFileUpload = (
       message.error("请先选择文件!");
       return;
     }
-    // 通过文件名检查是否已经上传了该文件
-    const res = await axios.get('http://localhost:3000/check/file?filename=' + file.name)
-    hasExistFile.value = res.data.hasExist
-    if (res.data.hasExist) {
-      console.log('文件已存在，无需重复上传')
-      message.warning('文件已存在，无需重复上传')
-      return;
-    }
 
     // 恢复上传不用重新创建切片，延续之前的切片进度
     if (!resume) {
-      state.value = UploadStatus.Uploading
+      state.value = UploadStatus.Uploading;
       fileTarget = file;
       chunks.value = createChunks(file);
+      console.log("chunks", chunks.value);
+      console.log(file.name.split(".").pop())
+      fileHash = await getHashWorker() + '.' + file.name.split(".").pop();
+    }
+
+    // 通过文件名检查是否已经上传了该文件
+    const res = await axios.get(`${baseUrl}/check/file?filename=${fileHash}`);
+    hasExistFile.value = res.data.hasExist;
+    if (res.data.hasExist) {
+      console.log("文件已存在，无需重复上传");
+      message.warning("文件已存在，无需重复上传");
+      return;
     }
 
     // 创建切片上传请求队列
@@ -202,7 +239,7 @@ export const useBigFileUpload = (
         message: string;
         hasExist: boolean;
       }> = await axios.get(
-        `http://localhost:3000/chunk/check?filename=${name}&index=${index}`,
+        `${baseUrl}/chunk/check?filename=${name}&index=${index}`,
         {
           signal: abortController.signal,
         }
@@ -210,7 +247,6 @@ export const useBigFileUpload = (
 
       if (state.value === UploadStatus.Pause) return;
 
-      console.log(res, "下来了");
       if (res.data.hasExist) {
         chunkReqQueueList[i] = uploadChunkApi(chunk);
       } else {
@@ -229,7 +265,7 @@ export const useBigFileUpload = (
       );
       console.log("切片上传完成", res, chunkReqQueueList.length);
 
-      mergeChunksApi(file.name);
+      mergeChunksApi(fileHash);
 
       console.log("文件总大小", file.size);
       console.log(
@@ -241,7 +277,7 @@ export const useBigFileUpload = (
 
   // 暂停切片上传
   const pauseUpload = () => {
-    state.value = UploadStatus.Pause
+    state.value = UploadStatus.Pause;
     chunkReqQueueList.forEach((req) => {
       if (req.abortController) {
         req.abortController.abort("用户取消上传!");
@@ -253,7 +289,7 @@ export const useBigFileUpload = (
 
   // 恢复切片上传
   const resumeUpload = () => {
-    state.value = UploadStatus.Uploading
+    state.value = UploadStatus.Uploading;
     startUpload(fileTarget!, true);
   };
 
@@ -263,6 +299,6 @@ export const useBigFileUpload = (
     pauseUpload,
     resumeUpload,
     chunks,
-    state
+    state,
   };
 };

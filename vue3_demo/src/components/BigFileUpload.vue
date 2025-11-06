@@ -78,7 +78,8 @@ const onResume = () => {
 
 <style scoped>
 .upload-file {
-  width: 800px;
+  width: 1000px;
+  padding: 20px;
 }
 .actions {
   display: flex;
