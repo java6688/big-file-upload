@@ -6,7 +6,7 @@
     <div class="percentage">
       <div>
         <span>上传进度：</span>
-        <n-progress type="line" :percentage="percentage" />
+        <n-progress type="line" :percentage="progress" />
       </div>
     </div>
     <div class="actions">
@@ -14,7 +14,13 @@
       <n-button v-else type="default" @click="onPause">暂停</n-button> -->
       <n-button type="default" @click="onPause">暂停</n-button>
       <n-button type="primary" @click="onResume">继续</n-button>
-      <n-button type="error" @click="onCancel">取消</n-button>
+    </div>
+
+    <div class="chunk-list">
+      <h3>分片上传列表</h3>
+      <ChunkDetail
+        :list="chunks"
+      ></ChunkDetail>
     </div>
   </div>
 </template>
@@ -23,9 +29,23 @@
 import { NUpload, NButton, useMessage, NProgress } from "naive-ui";
 import type { UploadFileInfo } from "naive-ui";
 import { useBigFileUpload } from "@/hooks/useBigFileUpload";
+import ChunkDetail from "@/components/ChunkDetail.vue";
+import { computed } from "vue";
 
-const { percentage, isPause, startUpload, pauseUpload, resumeUpload, cancelUpload } = useBigFileUpload();
-const message = useMessage()
+const {
+  percentage,
+  startUpload,
+  pauseUpload,
+  resumeUpload,
+  chunks
+} = useBigFileUpload();
+const message = useMessage();
+
+window.$message = message
+
+const progress = computed(() => {
+  return parseFloat(percentage.value.toFixed(2))
+})
 
 const onUpload = (data: {
   file: UploadFileInfo;
@@ -35,8 +55,8 @@ const onUpload = (data: {
   console.log(data);
   const file = data.file.file;
   if (!file) {
-    message.error('请选择文件!')
-    return
+    message.error("请选择文件!");
+    return;
   }
   startUpload(file);
 };
@@ -49,18 +69,19 @@ const onResume = () => {
   resumeUpload();
 };
 
-const onCancel = () => {
-  cancelUpload();
-};
-
 </script>
 
 <style scoped>
 .upload-file {
-  width: 500px;
+  width: 800px;
 }
 .actions {
   display: flex;
   gap: 10px;
+}
+
+.chunk-list {
+  height: 800px;
+  overflow-y: auto;
 }
 </style>

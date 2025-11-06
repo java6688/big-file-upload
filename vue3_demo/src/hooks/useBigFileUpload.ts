@@ -1,191 +1,242 @@
 import axios, { type AxiosProgressEvent, type AxiosResponse } from "axios";
-import { ref, computed } from "vue";
-import { useMessage } from "naive-ui";
+import { computed, markRaw, ref } from "vue";
 
-const message = useMessage();
+const message = window.$message
 
-interface Props {
+type Props = {
   chunkSize: number;
-}
+};
 
-interface UploadChunkQueue {
+type ChunkRequestQueue = {
   promise: Promise<AxiosResponse>;
   abortController: AbortController;
-}
+};
 
-interface Chunk {
-  index: number;
+export type Chunk = {
+  // 切片数据
   chunk: Blob;
-  filename: string;
-}
-
-// 当前上传状态值
-export const UploadStatus = {
-  // 上传中
-  Uploading: 'uploading',
-  // 上传完成
-  Completed: 'completed',
-  // 上传中断
-  Failed: 'failed',
-}
+  // 当前切片索引
+  index: number;
+  // 切片文件名
+  name: string;
+  // 总大小
+  size: number;
+  // 已上传大小
+  uploaded: number;
+  // 请求总进度
+  requestSize: number;
+  // 是否完成上传
+  completed: boolean;
+};
 
 export const useBigFileUpload = (
   props: Props = {
-    chunkSize: 1024 * 1024 * 0.1,
+    chunkSize: 1024 * 1024 * 1,
   }
 ) => {
-
+  const hasExistFile = ref(false);
+  let isPuase = false;
   // 当前上传的文件
   let fileTarget: File | null = null;
 
-  // 各切片已上传进度
-  const chunkProgressList = ref<number[]>([]);
-
   // 当前上传切片数组
-  let chunks: Chunk[] = []
+  const chunks = ref<Chunk[]>([]);
 
-  // 当前上传队列
-  let chunkReqQueueList: UploadChunkQueue[] = [];
+  // 当前上传请求队列
+  let chunkReqQueueList: ChunkRequestQueue[] = [];
 
-  // 旧的上传进度
-  let oldProgress = 0;
-
-  // 是否暂停切片上传
-  const isPause = ref(false);
-
-  // 初始化所有状态
-  const init = () => {
-    fileTarget = null
-    chunkProgressList.value = []
-    chunkReqQueueList = []
-    oldProgress = 0
-  }
-
-  // 根据切片上传进度计算文件的上传进度
+  // 当前上传完成的切片/总切片数
   const percentage = computed(() => {
-    if (chunkProgressList.value.length === 0) {
+    if(hasExistFile.value) {
+      return 100
+    }
+    const chunkSize = chunks.value.length;
+    if (chunkSize === 0) {
       return 0;
     }
-    const current = chunkProgressList.value.reduce(
-      (pre, cur) => pre + cur,
-      0
-    );
-    const fileSize = fileTarget?.size || 0;
-
-    const value = Math.floor((current / fileSize) * 100)
-
-    // 避免断点续传的进度条倒退
-    if(oldProgress >= value) {
-      return oldProgress;
-    }
-    // 保存进度
-    oldProgress = value;
-    return value;
+    const conpletedChunks = chunks.value.filter((chunk) => chunk.completed);
+    console.log("已完成切片数", conpletedChunks.length);
+    console.log("总切片数", chunkSize);
+    return (conpletedChunks.length / chunkSize) * 100;
   });
 
   // 创建切片，切片大小可根据自身需求调整
-  const createChunks = (file: File, chunkSize: number = props.chunkSize): Chunk[] => {
-    const chunks = [];
+  const createChunks = (
+    file: File,
+    chunkSize: number = props.chunkSize
+  ): Chunk[] => {
+    const chunks: Chunk[] = [];
     for (let i = 0, j = 0; i < file.size; i += chunkSize, j++) {
       chunks.push({
-        filename: file.name,
-        chunk: file.slice(i, i + chunkSize),
+        chunk: markRaw(file.slice(i, i + chunkSize)),
+        name: file.name + "-" + j,
         index: j,
+        size: chunkSize,
+        uploaded: 0,
+        completed: false,
+        requestSize: 0,
       });
     }
     return chunks;
   };
 
   // 上传切片
-  const uploadChunkApi = (data: {
-    filename: string;
-    index: number;
-    chunk: Blob;
-  }): UploadChunkQueue => {
-    const { filename, index, chunk } = data;
+  const uploadChunkApi = (data: Chunk): ChunkRequestQueue => {
+    const { name, index, chunk } = data;
     const formData = new FormData();
     formData.append("chunk", chunk);
+    // formData.append("filename", filename);
+    // formData.append("index", index.toString());
 
     // 创建中断请求器
     const abortController = new AbortController();
 
-    const promise = axios.post(
-      `http://localhost:3000/chunk?filename=${filename}&index=${index}`,
-      formData,
-      {
-        signal: abortController.signal,
-        onUploadProgress: (progressEvent: AxiosProgressEvent) => {
-          // 计算上传进度
-          if (progressEvent.lengthComputable) {
-            // 记录当前切片上传进度
-            chunkProgressList.value[index] = progressEvent.loaded
-          }
-        },
-      }
-    )
+    const promise = axios
+      .post(
+        `http://localhost:3000/chunk?filename=${name}&index=${index}`,
+        formData,
+        {
+          signal: abortController.signal,
+          onUploadProgress: (progressEvent: AxiosProgressEvent) => {
+            // 计算上传进度
+            if (chunks.value[index] && progressEvent.total) {
+              // 记录当前上传切片请求进度。
+              // 注意，由于网络请求具有额外开销，上传进度可能会和切片大小不一样
+              chunks.value[index].uploaded = progressEvent.loaded;
+              chunks.value[index].requestSize = progressEvent.total;
+            }
+          },
+        }
+      )
+      .then((res) => {
+        if (chunks.value[index]) {
+          chunks.value[index].completed = true;
+        }
+        // 处理完切片后，返回结果到下一个then回调
+        return res;
+      });
 
     return {
       promise,
-      abortController
-    }
+      abortController,
+    };
   };
 
   // 合并切片
   const mergeChunksApi = (filename: string) => {
-    return axios.post('http://localhost:3000/merge-chunk', {
-      filename
+    return axios.post("http://localhost:3000/merge-chunk", {
+      filename,
     });
   };
 
   // 开始上传文件
   const startUpload = async (file: File, resume: boolean = false) => {
+    if (!file) {
+      message.error("请先选择文件!");
+      return;
+    }
+    // 通过文件名检查是否已经上传了该文件
+    const res = await axios.get('http://localhost:3000/check/file?filename=' + file.name)
+    hasExistFile.value = res.data.hasExist
+    if (res.data.hasExist) {
+      console.log('文件已存在，无需重复上传')
+      message.warning('文件已存在，无需重复上传')
+      return;
+    }
 
-    // 不是恢复上传，需要初始化各切片上传进度、切片上传状态
-    if(!resume) {
-      init()
-      // 记录文件，恢复上传、计算上传进度
+    // 恢复上传不用重新创建切片，延续之前的切片进度
+    if (!resume) {
       fileTarget = file;
-      chunks = createChunks(file);
+      chunks.value = createChunks(file);
     }
 
     // 创建切片上传请求队列
-    chunkReqQueueList = chunks.map((chunk) => {
-      return uploadChunkApi(chunk);
-    });
-    await Promise.all(chunkReqQueueList.map((item) => item.promise));
+    // chunkReqQueueList = chunks.value
+    //   // 过滤出未上传完成的切片
+    //   .filter((chunk) => {
+    //     return !chunk.completed;
+    //   })
+    //   // 创建切片上传请求
+    //   .map((chunk) => {
+    //     return uploadChunkApi(chunk);
+    //   });
+    const waitUploadChunks = chunks.value
+      // 过滤出未上传完成的切片
+      .filter((chunk) => {
+        return !chunk.completed;
+      });
 
-    console.log("切片上传完成");
+    for (let i = 0; i < waitUploadChunks.length; i++) {
+      const chunk = waitUploadChunks[i] as Chunk;
+      const name = chunk.name;
+      const index = chunk.index;
 
-    mergeChunksApi(file.name);
+      const abortController = new AbortController();
+      // 发生请求前先验证切片是否已经上传
+      const res: AxiosResponse<{
+        code: number;
+        message: string;
+        hasExist: boolean;
+      }> = await axios.get(
+        `http://localhost:3000/chunk/check?filename=${name}&index=${index}`,
+        {
+          signal: abortController.signal,
+        }
+      );
+
+      if (isPuase) break;
+
+      console.log(res, "下来了");
+      if (res.data.hasExist) {
+        chunkReqQueueList[i] = uploadChunkApi(chunk);
+      } else {
+        chunkReqQueueList[i] = {
+          promise: Promise.resolve(res),
+          abortController,
+        };
+        chunk.completed = true;
+      }
+    }
+
+    if (chunkReqQueueList.length > 0) {
+      const res = await Promise.all(
+        chunkReqQueueList.map((item) => item.promise)
+      );
+      console.log("切片上传完成", res, chunkReqQueueList.length);
+
+      mergeChunksApi(file.name);
+
+      console.log("文件总大小", file.size);
+      console.log(
+        "切片总大小",
+        chunks.value.reduce((acc, cur) => acc + cur.requestSize, 0)
+      );
+    }
   };
 
   // 暂停切片上传
   const pauseUpload = () => {
-    isPause.value = true;
+    isPuase = true;
     chunkReqQueueList.forEach((req) => {
-      req.abortController.abort("用户取消上传!");
+      if (req.abortController) {
+        req.abortController.abort("用户取消上传!");
+      }
     });
     // 清空上传队列
-    chunkReqQueueList = []
+    chunkReqQueueList = [];
   };
 
   // 恢复切片上传
   const resumeUpload = () => {
-    isPause.value = false;
-    if(!fileTarget) {
-      message.error("请先选择文件!");
-      return;
-    }
-    startUpload(fileTarget!);
+    isPuase = false;
+    startUpload(fileTarget!, true);
   };
 
-  // 取消上传
-  const cancelUpload = () => {
-    chunkReqQueueList.forEach((req) => {
-      req.abortController.abort("用户取消上传!");
-    });
-    init()
+  return {
+    percentage,
+    startUpload,
+    pauseUpload,
+    resumeUpload,
+    chunks,
   };
-
-  return { percentage, isPause, startUpload, pauseUpload, resumeUpload, cancelUpload };
 };
