@@ -1,40 +1,22 @@
 <template>
-  <div>
-    <form action="http://localhost:3000/upload" method="post"
-      enctype="multipart/form-data"
-    >
-      <input type="file" @change="onUpload">
-    </form>
-  </div>
+  <n-message-provider>
+    <div class="app">
+      <BigFileUpload />
+    </div>
+  </n-message-provider>
 </template>
 
 <script setup lang="ts">
-import { useBigFileUpload } from './hooks/useBigFileUpload'
+import { NMessageProvider } from "naive-ui";
+import BigFileUpload from './components/BigFileUpload.vue';
 
-const { uploadChunkApi, createChunks, mergeChunksApi } = useBigFileUpload()
-
-const onUpload = (e: any) => {
-  console.log(e.target.files)
-  const file = e.target.files[0]
-  upload(file)
-}
-const upload = async (file: File) => {
-
-  const chunks = createChunks(file)
-
-  const reqs = chunks.map(chunk => {
-    return uploadChunkApi(chunk)
-  })
-
-  await Promise.all(reqs)
-
-  console.log('上传完成')
-
-  mergeChunksApi(file.name)
-
-}
 </script>
 
 <style scoped>
-
+.app {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
 </style>
