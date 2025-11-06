@@ -1,6 +1,6 @@
 <template>
   <div class="upload-file">
-    <n-upload @change="onUpload">
+    <n-upload @before-upload="onUpload">
       <n-button>上传文件</n-button>
     </n-upload>
     <div class="percentage">
@@ -29,7 +29,7 @@
 import { NUpload, NButton, useMessage, NProgress } from "naive-ui";
 import type { UploadFileInfo } from "naive-ui";
 import { useBigFileUpload } from "@/hooks/useBigFileUpload";
-import ChunkDetail from "@/components/ChunkDetail.vue";
+import ChunkDetail from "./ChunkDetail.vue";
 import { computed } from "vue";
 
 const {
@@ -40,8 +40,6 @@ const {
   chunks
 } = useBigFileUpload();
 const message = useMessage();
-
-window.$message = message
 
 const progress = computed(() => {
   return parseFloat(percentage.value.toFixed(2))
@@ -81,7 +79,7 @@ const onResume = () => {
 }
 
 .chunk-list {
-  height: 800px;
+  height: 600px;
   overflow-y: auto;
 }
 </style>

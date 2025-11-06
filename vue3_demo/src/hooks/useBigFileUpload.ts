@@ -1,7 +1,10 @@
 import axios, { type AxiosProgressEvent, type AxiosResponse } from "axios";
+import { createDiscreteApi } from "naive-ui";
 import { computed, markRaw, ref } from "vue";
 
-const message = window.$message
+const { message } = createDiscreteApi(
+  ['message']
+)
 
 type Props = {
   chunkSize: number;
