@@ -19,6 +19,7 @@
       <span>操作：</span>
       <n-button type="default" @click="onPause">暂停</n-button>
       <n-button type="primary" @click="onResume">继续</n-button>
+      <n-tag type="error" v-if="isPuase">已暂停</n-tag>
     </div>
 
     <div class="chunk-list">
@@ -31,7 +32,7 @@
 </template>
 
 <script setup lang="ts">
-import { NUpload, NButton, useMessage, NProgress } from "naive-ui";
+import { NUpload, NButton, useMessage, NProgress, NTag } from "naive-ui";
 import type { UploadFileInfo } from "naive-ui";
 import { useBigFileUpload } from "@/hooks/useBigFileUpload";
 import ChunkDetail from "./ChunkDetail.vue";
