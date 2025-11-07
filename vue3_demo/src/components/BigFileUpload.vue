@@ -3,6 +3,12 @@
     <n-upload @before-upload="onUpload">
       <n-button>上传文件</n-button>
     </n-upload>
+    <div class="section">
+      <div>
+        <span>文件内容hash计算进度：</span>
+        <n-progress type="line" color="green" :percentage="hashProgress" />
+      </div>
+    </div>
     <div class="percentage section">
       <div>
         <span>上传进度：</span>
@@ -44,7 +50,8 @@ const {
   pauseUpload,
   resumeUpload,
   chunks,
-  state
+  state,
+  hashProgress
 } = useBigFileUpload();
 const message = useMessage();
 

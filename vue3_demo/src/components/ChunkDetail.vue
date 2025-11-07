@@ -13,7 +13,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="data in list" :key="data.name" align="center">
+          <tr v-for="data in list" :key="data.index" align="center">
             <td>{{ data.index }}</td>
             <td>{{ data.name }}</td>
             <td>{{ data.size}}</td>

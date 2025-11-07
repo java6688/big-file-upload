@@ -43,7 +43,7 @@ export const UploadStatus = {
   // 完成
   Completed: "completed",
   // 等待上传
-  Wait: "wait",
+  Wait: "wait"
 };
 
 export const useBigFileUpload = (
@@ -51,6 +51,8 @@ export const useBigFileUpload = (
     chunkSize: 1024 * 1024 * 1,
   }
 ) => {
+  // 当前计算hash进度
+  const hashProgress = ref(0);
   // 文件上传状态
   const state = ref(UploadStatus.Wait);
   // 服务器已存在该文件
@@ -58,7 +60,7 @@ export const useBigFileUpload = (
   // 当前上传的文件
   let fileTarget: File | null = null;
   // 文件哈希值
-  let fileHash = '';
+  let fileHash = "";
 
   // 当前上传切片数组
   const chunks = ref<Chunk[]>([]);
@@ -79,25 +81,41 @@ export const useBigFileUpload = (
     return (conpletedChunks.length / chunkSize) * 100;
   });
 
+  // axios实例化
+  const http = axios.create({
+    baseURL: baseUrl,
+    // timeout: 10000,
+  });
+
+  http.interceptors.request.use(
+    function (config: any) {
+      return config;
+    },
+    function (error) {
+      // 对请求错误做些什么
+      return Promise.reject(error);
+    }
+  );
+
+  // 添加响应拦截器
+  http.interceptors.response.use(
+    function (response) {
+      return response;
+    },
+    function (error) {
+      console.log("响应错误", error);
+      return Promise.reject(error);
+    }
+  );
+
   // 创建切片，切片大小可根据自身需求调整
   const createChunks = (
     file: File,
     chunkSize: number = props.chunkSize
-  ): Chunk[] => {
-    const chunks: Chunk[] = [];
+  ): Blob[] => {
+    const chunks: Blob[] = [];
     for (let i = 0, j = 0; i < file.size; i += chunkSize, j++) {
-      chunks.push({
-        chunk: markRaw(file.slice(i, i + chunkSize)),
-        name: file.name,
-        index: j,
-        size: chunkSize,
-        uploaded: 0,
-        requestSize: 0,
-        progress: 0,
-        get completed() {
-          return this.progress === 1;
-        },
-      });
+      chunks.push(file.slice(i, i + chunkSize))
     }
     return chunks;
   };
@@ -107,14 +125,12 @@ export const useBigFileUpload = (
     const { name, index, chunk } = data;
     const formData = new FormData();
     formData.append("chunk", chunk);
-    // formData.append("filename", filename);
-    // formData.append("index", index.toString());
 
     // 创建中断请求器
     const abortController = new AbortController();
 
-    const promise = axios.post(
-      `${baseUrl}/chunk?filename=${name}&index=${index}&fileHash=${fileHash}`,
+    const promise = http.post(
+      `${baseUrl}/chunk?chunkName=${name}`,
       formData,
       {
         signal: abortController.signal,
@@ -151,13 +167,14 @@ export const useBigFileUpload = (
   };
 
   // 合并切片
-  const mergeChunksApi = (filename: string) => {
-    return axios.post(`http://localhost:3000/merge-chunk`, {
-      filename,
+  const mergeChunksApi = (fileHash: string) => {
+    return http.post(`http://localhost:3000/merge-chunk`, {
+      fileHash,
     });
   };
 
-  const getHashWorker = async (): Promise<string> => {
+  const getHashWorker = async (tempChunks: Blob[]): Promise<string> => {
+    hashProgress.value = 0;
     return new Promise((resolve) => {
       // 导入vue3_demo\src\utils\workers\file-hash.work.js的worker
       const worker = new Worker(
@@ -168,21 +185,25 @@ export const useBigFileUpload = (
       );
       console.log(import.meta.url);
       worker.postMessage({
-        chunks: chunks.value.map((chunk) => chunk.chunk),
+        chunks: tempChunks,
       });
       worker.onmessage = (e) => {
         const { index, hash } = e.data;
-        console.log("worker hash", hash);
-        if(chunks.value[index]) {
-          chunks.value[index].name = hash;
+        // 计算当前计算hash进度
+        if(tempChunks.length) {
+          hashProgress.value = (index / tempChunks.length) * 100;
         }
-        console.log(chunks.value.length === e.data.index);
-        if (chunks.value.length === e.data.index) {
+        if (hash) {
           // 完成计算哈希值
-          resolve(e.data.hash);
+          resolve(hash);
         }
       };
     });
+  };
+
+  // 构建hash文件名
+  const buildChunkName = (hash: string, index: number) => {
+    return `${hash}-${index}`;
   };
 
   // 开始上传文件
@@ -196,14 +217,29 @@ export const useBigFileUpload = (
     if (!resume) {
       state.value = UploadStatus.Uploading;
       fileTarget = file;
-      chunks.value = createChunks(file);
-      console.log("chunks", chunks.value);
-      console.log(file.name.split(".").pop())
-      fileHash = await getHashWorker() + '.' + file.name.split(".").pop();
+      const tempChunks = createChunks(file);
+      console.log("chunks", chunks);
+      console.log(file.name.split(".").pop());
+      fileHash = (await getHashWorker(tempChunks)) + "." + file.name.split(".").pop();
+      chunks.value = tempChunks.map((chunk, i) => {
+        return {
+          name: buildChunkName(fileHash, i),
+          chunk: markRaw(chunk),
+          index: i,
+          size: props.chunkSize,
+          uploaded: 0,
+          requestSize: 0,
+          progress: 0,
+          get completed() {
+            return this.progress === 1;
+          },
+        }
+      });
+      // return
     }
 
     // 通过文件名检查是否已经上传了该文件
-    const res = await axios.get(`${baseUrl}/check/file?filename=${fileHash}`);
+    const res = await http.get(`${baseUrl}/check/file?fileHash=${fileHash}`);
     hasExistFile.value = res.data.hasExist;
     if (res.data.hasExist) {
       console.log("文件已存在，无需重复上传");
@@ -230,7 +266,6 @@ export const useBigFileUpload = (
     for (let i = 0; i < waitUploadChunks.length; i++) {
       const chunk = waitUploadChunks[i] as Chunk;
       const name = chunk.name;
-      const index = chunk.index;
 
       const abortController = new AbortController();
       // 发生请求前先验证切片是否已经上传
@@ -238,8 +273,8 @@ export const useBigFileUpload = (
         code: number;
         message: string;
         hasExist: boolean;
-      }> = await axios.get(
-        `${baseUrl}/chunk/check?filename=${name}&index=${index}`,
+      }> = await http.get(
+        `${baseUrl}/chunk/check?chunkName=${name}`,
         {
           signal: abortController.signal,
         }
@@ -300,5 +335,6 @@ export const useBigFileUpload = (
     resumeUpload,
     chunks,
     state,
+    hashProgress
   };
 };

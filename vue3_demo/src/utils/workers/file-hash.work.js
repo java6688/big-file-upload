@@ -23,7 +23,7 @@ self.onmessage = function (e) {
     fileReader.readAsArrayBuffer(chunks[index]); // 读取分片数据[citation:3]
     fileReader.onload = (e) => {
       spark.append(e.target.result); // 追加到 SparkMD5 实例[citation:7]
-      self.postMessage({ index, hash: spark.end() });
+      self.postMessage({ index });
       // 读取下一个分片
       readChunk(index + 1);
     };

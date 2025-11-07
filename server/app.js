@@ -26,12 +26,13 @@ const chunkDir = path.join(process.cwd(), 'chunks');
 // 合并后的文件存放路径
 const mergeDir = path.join(process.cwd(), 'upload');
 
-const buildChunkname = (filename, index) => {
-  return filename + '-' + index
-}
+// 验证切片是否已存在接口
+app.get('/chunk/check', (req, res) => {
 
-const verifyChunks = (req, res) => {
-  const chunkPath = path.join(chunkDir, buildChunkname(req.query.filename, req.query.index));
+  const chunkName = req.query.chunkName
+  const fileHash = extractFileHash(chunkName);
+  const chunkPath = path.join(chunkDir, fileHash, chunkName);
+
   // 检查当前切片文件是否已经存在
   const hasExistFile = fs.existsSync(chunkPath);
   console.log('hasExistFile', hasExistFile, chunkPath);
@@ -50,15 +51,12 @@ const verifyChunks = (req, res) => {
     console.log('切片不存在，继续上传');
   }
   return hasExistFile
-}
-
-// 验证切片是否已存在接口
-app.get('/chunk/check', verifyChunks)
+})
 
 // 查询mergeDir目录下是否存在上传的文件
 app.get('/check/file', (req, res) => {
-  const filename = req.query.filename;
-  const filePath = path.join(mergeDir, filename);
+  const fileHash = req.query.fileHash;
+  const filePath = path.join(mergeDir, fileHash);
   const hasExistFile = fs.existsSync(filePath);
   console.log('hasExistFile', hasExistFile, filePath);
   if (hasExistFile) {
@@ -76,13 +74,18 @@ app.get('/check/file', (req, res) => {
   }
 })
 
+// 从分片名称提取文件hash
+function extractFileHash(chunkName) {
+  return chunkName.split('-')[0];
+}
+
 // 处理切片文件上传。
 app.post('/chunk', async (req, res) => {
   console.log('upload收到文件上传请求', req.body);
 
-  const filename = req.query.filename;
-  const chunkIndex = req.query.index;
-  const fileHash = req.query.fileHash;
+  const chunkName = req.query.chunkName;
+
+  const fileHash = extractFileHash(chunkName);
 
   // 判断当前目录没有temp文件夹，则创建
   if (!fs.existsSync('./temp')) {
@@ -94,7 +97,7 @@ app.post('/chunk', async (req, res) => {
     uploadDir: './temp', // 临时存储路径
     keepExtensions: true,
     filename: () => {
-      return buildChunkname(filename, chunkIndex)
+      return chunkName
     }
   });
 
@@ -103,7 +106,7 @@ app.post('/chunk', async (req, res) => {
     const [fields, files] = await form.parse(req);
     console.log('fields', fields);
     // console.log('files', files);
-    // const filename = fields.filename[0];
+    // const fileHash = fields.fileHash[0];
     // const chunkIndex = fields.index[0];
     const chunkFile = files.chunk[0];
 
@@ -111,12 +114,13 @@ app.post('/chunk', async (req, res) => {
       fs.mkdirSync(chunkDir, { recursive: true });
     }
     // 将临时文件移动到 chunkDir 目录
-    const targetPath = path.join(chunkDir, fileHash, buildChunkname(filename, chunkIndex));
-    if (!fs.existsSync(path.join(chunkDir, fileHash))) {
-      fs.mkdirSync(path.join(chunkDir, fileHash), { recursive: true });
+    const fileHashDir = path.join(chunkDir, fileHash);
+    const targetPath = path.join(fileHashDir, chunkName);
+    if (!fs.existsSync(fileHashDir)) {
+      fs.mkdirSync(fileHashDir, { recursive: true });
     }
     fs.renameSync(chunkFile.filepath, targetPath)
-    console.log('分片上传成功', chunkIndex);
+    console.log('分片上传成功');
   } catch (error) {
     return res.status(500).json({ msg: '分片上传失败', error: error });
   }
@@ -131,17 +135,17 @@ app.post('/chunk', async (req, res) => {
 // 合并切片
 app.post('/merge-chunk', (req, res) => {
   console.log('merge-chunk收到文件合并请求', req.body);
-  const { filename } = req.body;
-  if (!filename) {
-    return res.status(400).send({ success: false, message: '缺少filename参数' });
+  const { fileHash } = req.body;
+  if (!fileHash) {
+    return res.status(400).send({ success: false, message: '缺少fileHash参数' });
   }
   // 合并后的文件路径，如果不存在则创建该目录
   if (!fs.existsSync(mergeDir)) {
     fs.mkdirSync(mergeDir, { recursive: true });
   }
-  const mergeFilePath = path.join(mergeDir, filename);
+  const mergeFilePath = path.join(mergeDir, fileHash);
 
-  const chunkHashDir = path.join(chunkDir, filename);
+  const chunkHashDir = path.join(chunkDir, fileHash);
   console.log('chunkHashDir', chunkHashDir);
   // 读取目录下所有切片文件，按 index 排序
   const chunkFilenames = fs.readdirSync(chunkHashDir)
@@ -183,7 +187,7 @@ app.post('/merge-chunk', (req, res) => {
     success: true,
     message: '文件合并成功',
     file: {
-      filename,
+      fileHash,
       size: mergedSize,
       path: mergeFilePath,
       chunkFilenames
