@@ -41,14 +41,12 @@ app.get('/chunk/check', (req, res) => {
     res.json({
       code: 200,
       message: '切片已存在，跳过该切片上传',
-      hasExist: false
+      hasExist: true
     })
-    console.log('切片已存在，跳过该切片上传');
     return
   } else {
     // 切片不存在
-    res.json({ code: 200, message: '切片不存在，继续上传', hasExist: true })
-    console.log('切片不存在，继续上传');
+    res.json({ code: 200, message: '切片不存在，继续上传', hasExist: false })
   }
   return hasExistFile
 })
@@ -58,7 +56,6 @@ app.get('/check/file', (req, res) => {
   const fileHash = req.query.fileHash;
   const filePath = path.join(mergeDir, fileHash);
   const hasExistFile = fs.existsSync(filePath);
-  console.log('hasExistFile', hasExistFile, filePath);
   if (hasExistFile) {
     res.json({
       code: 200,
@@ -81,7 +78,6 @@ function extractFileHash(chunkName) {
 
 // 处理切片文件上传。
 app.post('/chunk', async (req, res) => {
-  console.log('upload收到文件上传请求', req.body);
 
   const chunkName = req.query.chunkName;
 
@@ -104,10 +100,6 @@ app.post('/chunk', async (req, res) => {
   try {
     // 解析表单数据，并把切片写入临时目录中
     const [fields, files] = await form.parse(req);
-    console.log('fields', fields);
-    // console.log('files', files);
-    // const fileHash = fields.fileHash[0];
-    // const chunkIndex = fields.index[0];
     const chunkFile = files.chunk[0];
 
     if (!fs.existsSync(chunkDir)) {
@@ -120,7 +112,6 @@ app.post('/chunk', async (req, res) => {
       fs.mkdirSync(fileHashDir, { recursive: true });
     }
     fs.renameSync(chunkFile.filepath, targetPath)
-    console.log('分片上传成功');
   } catch (error) {
     return res.status(500).json({ msg: '分片上传失败', error: error });
   }
@@ -134,7 +125,6 @@ app.post('/chunk', async (req, res) => {
 
 // 合并切片
 app.post('/merge-chunk', (req, res) => {
-  console.log('merge-chunk收到文件合并请求', req.body);
   const { fileHash } = req.body;
   if (!fileHash) {
     return res.status(400).send({ success: false, message: '缺少fileHash参数' });
@@ -144,9 +134,8 @@ app.post('/merge-chunk', (req, res) => {
     fs.mkdirSync(mergeDir, { recursive: true });
   }
   const mergeFilePath = path.join(mergeDir, fileHash);
-
   const chunkHashDir = path.join(chunkDir, fileHash);
-  console.log('chunkHashDir', chunkHashDir);
+
   // 读取目录下所有切片文件，按 index 排序
   const chunkFilenames = fs.readdirSync(chunkHashDir)
     // 按 index 排序
@@ -155,8 +144,6 @@ app.post('/merge-chunk', (req, res) => {
       const indexB = parseInt(b.split('-').pop(), 10);
       return indexA - indexB;
     });
-
-  console.log('合并文件');
 
   // 创建可写流，合并切片
   const writeStream = fs.createWriteStream(mergeFilePath);
