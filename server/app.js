@@ -29,8 +29,13 @@ const mergeDir = path.join(process.cwd(), 'upload');
 // 验证切片是否已存在接口
 app.get('/chunk/check', (req, res) => {
 
+  // 切片文件名称
   const chunkName = req.query.chunkName
+
+  // 从切片文件名称中提取文件hash
   const fileHash = extractFileHash(chunkName);
+
+  // 待合并的分片目录路径
   const chunkPath = path.join(chunkDir, fileHash, chunkName);
 
   // 检查当前切片文件是否已经存在
@@ -71,46 +76,64 @@ app.get('/check/file', (req, res) => {
   }
 })
 
-// 从分片名称提取文件hash
+// 从分片名称提取文件hash，如：chunkName=91a509c780df16d509e69d604292e870.mp4-0
 function extractFileHash(chunkName) {
   return chunkName.split('-')[0];
 }
 
-// 处理切片文件上传。
+// 处理分片文件上传。
 app.post('/chunk', async (req, res) => {
 
+  // 分片保存的文件名称
   const chunkName = req.query.chunkName;
 
+  // 从分片名称中提取大文件的文件内容hash
   const fileHash = extractFileHash(chunkName);
 
   // 判断当前目录没有temp文件夹，则创建
   if (!fs.existsSync('./temp')) {
+    // 创建接收前端传输的分片数据，写入临时存放目录
     fs.mkdirSync('./temp', { recursive: true });
   }
 
-  // 使用formidable解析表单数据
+  // 使用formidable解析表单文件数据
   const form = formidable({
-    uploadDir: './temp', // 临时存储路径
+    // 分片临时存储路径，等数据写入完整再移动到待合并的分片目录，保证分片的完整性
+    uploadDir: './temp',
     keepExtensions: true,
     filename: () => {
+      // 自定义分片文件名称
       return chunkName
     }
   });
 
   try {
-    // 解析表单数据，并把切片写入临时目录中
+    // 解析表单数据，开始把切片写入临时目录中
     const [fields, files] = await form.parse(req);
+
+    // 分片写入完成，从解析后的文件中获取分片文件对象
     const chunkFile = files.chunk[0];
 
+    // 创建 chunkDir 目录，如果目录不存在
     if (!fs.existsSync(chunkDir)) {
+      // 创建待合并的分片目录
       fs.mkdirSync(chunkDir, { recursive: true });
     }
-    // 将临时文件移动到 chunkDir 目录
+
+    // 将临时文件移动到待合并的分片目录中
     const fileHashDir = path.join(chunkDir, fileHash);
+
+    // 创建文件 hash 目录，如果目录不存在
     const targetPath = path.join(fileHashDir, chunkName);
+
+    // 创建文件hash目录，如果目录不存在
+    // (如目录名称：91a509c780df16d509e69d604292e870.mp4)
     if (!fs.existsSync(fileHashDir)) {
       fs.mkdirSync(fileHashDir, { recursive: true });
     }
+
+    // 移动文件到待合并的分片目录中，上面写入完成的分片路径
+    // 如(chunkFile.filepath)：./temp/91a509c780df16d509e69d604292e870.mp4-0
     fs.renameSync(chunkFile.filepath, targetPath)
   } catch (error) {
     return res.status(500).json({ msg: '分片上传失败', error: error });

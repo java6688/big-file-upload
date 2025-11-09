@@ -38,10 +38,6 @@ defineProps<{
   list: Chunk[];
 }>();
 
-// const getProgress = (data: Chunk) => {
-//   const progress = data.requestSize ? (data.uploaded / data.requestSize) * 100 : 0;
-//   return progress.toFixed(2);
-// };
 </script>
 
 <style scoped>

@@ -85,7 +85,11 @@ export const useBigFileUpload = (
     return chunks;
   };
 
-  // 上传切片
+  /**
+   * 上传切片
+   * @param data 切片数据
+   * @returns ChunkRequestQueue 上传请求对象
+   */
   const uploadChunkApi = (data: Chunk): ChunkRequestQueue => {
     const { name, index, chunk } = data;
     const formData = new FormData();
@@ -104,10 +108,11 @@ export const useBigFileUpload = (
           progressEvent.progress
         ) {
           // 记录当前上传切片请求进度。
-          // 注意，由于网络请求具有额外开销，上传进度可能会和切片大小不一样
           chunks.value[index].uploaded = progressEvent.loaded;
+          // 记录当前上传切片请求总大小
+          // 注意，由于网络请求具有额外开销，上传进度可能会和切片大小不一样
           chunks.value[index].requestSize = progressEvent.total;
-          // 计算上传进度
+          // 计算上传进度，页面显示的是这个进度
           chunks.value[index].progress = progressEvent.progress;
         }
       },
@@ -119,13 +124,22 @@ export const useBigFileUpload = (
     };
   };
 
-  // 合并切片
+  /**
+   * 合并切片
+   * @param fileHash 文件哈希值
+   * @returns 合并结果
+   */
   const mergeChunksApi = (fileHash: string) => {
-    return http.post(`http://localhost:3000/merge-chunk`, {
+    return http.post(`/merge-chunk`, {
       fileHash,
     });
   };
 
+  /**
+   * 计算文件哈希值
+   * @param tempChunks 切片数组
+   * @returns 文件哈希值
+   */
   const getHashWorker = async (tempChunks: Blob[]): Promise<string> => {
     hashProgress.value = 0;
     return new Promise((resolve) => {
@@ -152,12 +166,57 @@ export const useBigFileUpload = (
     });
   };
 
-  // 构建hash文件名
+  /**
+   * 构建切片名
+   * @param hash 文件哈希值
+   * @param index 切片索引
+   * @returns 切片名
+   */
   const buildChunkName = (hash: string, index: number) => {
     return `${hash}-${index}`;
   };
 
-  // 开始上传文件
+  /**
+   * 检查文件是否已经上传
+   * @param fileHash 文件哈希值
+   * @returns 检查结果
+   */
+  const checkFileApi = async (fileHash: string) => {
+    // 通过文件hash检查是否已经上传了该文件
+    const res = await http.get(`${baseUrl}/check/file?fileHash=${fileHash}`);
+    // 返回检查结果
+    return res.data.hasExist
+  }
+
+  /**
+   * 检查切片是否已经上传
+   * @param chunkName 切片名
+   * @returns 检查结果
+   */
+  const checkChunkApi = async (chunkName: string) => {
+    // 创建中断请求器
+    const abortController = new AbortController();
+
+    // 发生请求前先验证切片是否已经上传
+    const res: AxiosResponse<{
+      code: number;
+      message: string;
+      hasExist: boolean;
+    }> = await http.get(`${baseUrl}/chunk/check?chunkName=${chunkName}`, {
+      signal: abortController.signal,
+    });
+
+    return {
+      res: res,
+      abortController,
+    }
+  };
+
+  /**
+   * 开始上传
+   * @param file
+   * @param resume 是否恢复上传
+   */
   const startUpload = async (file: File, resume: boolean = false) => {
     if (!file) {
       message.error("请先选择文件!");
@@ -166,6 +225,7 @@ export const useBigFileUpload = (
 
     // 恢复上传不用重新创建切片，延续之前的切片进度
     if (!resume) {
+      // 保存文件，用于后续恢复上传
       fileTarget = file;
       // 重置暂停状态，避免重复上传时暂停状态为true导致问题
       isPuase.value = false;
@@ -191,35 +251,27 @@ export const useBigFileUpload = (
       });
     }
 
-    // 通过文件名检查是否已经上传了该文件
-    const res = await http.get(`${baseUrl}/check/file?fileHash=${fileHash}`);
-    if (res.data.hasExist) {
+    // 通过文件hash检查是否已经上传了该文件
+    const hasExist = await checkFileApi(fileHash);
+    if (hasExist) {
       message.warning("文件已存在，无需重复上传");
       return;
     }
 
-    // 过滤出未上传完成的切片
+    // 如果是暂停后恢复上传时，过滤出未上传完成的切片
     const waitUploadChunks = chunks.value
       .filter((chunk) => {
         return !chunk.completed;
       });
 
-
+    // 遍历未完成上传的切片
     for (let i = 0; i < waitUploadChunks.length; i++) {
       const chunk = waitUploadChunks[i] as Chunk;
       const name = chunk.name;
 
-      // 创建中断请求器
-      const abortController = new AbortController();
 
       // 发生请求前先验证切片是否已经上传
-      const res: AxiosResponse<{
-        code: number;
-        message: string;
-        hasExist: boolean;
-      }> = await http.get(`${baseUrl}/chunk/check?chunkName=${name}`, {
-        signal: abortController.signal,
-      });
+      const { res, abortController } = await checkChunkApi(name);
 
       // 暂停了直接退出for循环，且不再执行for循环后面的代码
       if (isPuase.value) return;
@@ -232,7 +284,6 @@ export const useBigFileUpload = (
           abortController,
         };
         chunk.progress = 1;
-        // chunk.completed = true;
       } else {
         // 切片不存在，继续上传
         chunkReqQueueList[i] = uploadChunkApi(chunk);
